@@ -5,7 +5,9 @@ from .components.ipython import router as ipython_router
 from .components.shell import router as shell_router
 from .components.upload import router as upload_router
 from .components.term import router as term_router
+from .workspace import WORKSPACE_ROOT
 import logging
+import os
 import tomli
 from pathlib import Path
 
@@ -20,10 +22,24 @@ async def lifespan(app: FastAPI):
     logger.info("Ship container shutting down")
 
 
+def get_version() -> str:
+    """Get version from pyproject.toml."""
+    try:
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            data = tomli.load(f)
+        return data.get("project", {}).get("version", "unknown")
+    except Exception:
+        return "unknown"
+
+
+# Determine runtime version from pyproject.toml
+RUNTIME_VERSION = get_version()
+
 app = FastAPI(
     title="Ship API",
     description="A containerized execution environment with filesystem, IPython, and shell capabilities",
-    version="1.0.0",
+    version=RUNTIME_VERSION,
     lifespan=lifespan,
 )
 
@@ -45,15 +61,72 @@ async def health_check():
     return {"status": "healthy"}
 
 
-def get_version() -> str:
-    """Get version from pyproject.toml"""
-    try:
-        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
-        with open(pyproject_path, "rb") as f:
-            data = tomli.load(f)
-        return data.get("project", {}).get("version", "unknown")
-    except Exception:
-        return "unknown"
+def get_build_info() -> dict:
+    """Best-effort build/image metadata for diagnostics."""
+    return {
+        "image": os.environ.get("SHIP_IMAGE", "ship:default"),
+        "image_digest": os.environ.get("SHIP_IMAGE_DIGEST"),
+        "git_sha": os.environ.get("GIT_SHA"),
+    }
+
+
+@app.get("/meta")
+async def get_meta():
+    """Runtime self-description endpoint.
+
+    This endpoint is used by Bay to validate runtime version and capabilities.
+    """
+    return {
+        "runtime": {
+            "name": "ship",
+            "version": get_version(),
+            "api_version": "v1",
+            "build": get_build_info(),
+        },
+        "workspace": {
+            "mount_path": str(WORKSPACE_ROOT),
+        },
+        "capabilities": {
+            "filesystem": {
+                "operations": ["create", "read", "write", "edit", "delete", "list"],
+                "path_mode": "relative_to_mount",
+                "endpoints": {
+                    "create": "/fs/create_file",
+                    "read": "/fs/read_file",
+                    "write": "/fs/write_file",
+                    "edit": "/fs/edit_file",
+                    "delete": "/fs/delete_file",
+                    "list": "/fs/list_dir",
+                },
+            },
+            "shell": {
+                "operations": ["exec", "processes"],
+                "endpoints": {
+                    "exec": "/shell/exec",
+                    "processes": "/shell/processes",
+                },
+            },
+            "python": {
+                "operations": ["exec"],
+                "engine": "ipython",
+                "endpoints": {
+                    "exec": "/ipython/exec",
+                },
+            },
+            "terminal": {
+                "operations": ["ws"],
+                "protocol": "websocket",
+                "endpoints": {
+                    "ws": "/term/ws",
+                },
+            },
+            "upload": {
+                "operations": ["upload"],
+            },
+        },
+    }
+
+
 
 
 @app.get("/stat")
