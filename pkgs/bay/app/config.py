@@ -36,7 +36,25 @@ class DockerConfig(BaseModel):
     """Docker driver configuration."""
 
     socket: str = "unix:///var/run/docker.sock"
-    network: str = "bay-network"
+
+    # 可选：把 runtime 容器接入指定 network（Bay 也需要在该 network 内才能用容器 IP 直连）
+    # 为空则不指定 network（使用 Docker 默认网络）
+    network: str | None = None
+
+    # Bay->Runtime 连接模式：
+    # - container_network: 使用容器网络 IP 直连（需要 network 且 Bay 可达）
+    # - host_port: 使用宿主机端口映射（Bay 在宿主机上最常见）
+    # - auto: 优先 container_network，失败则回退 host_port
+    connect_mode: Literal["container_network", "host_port", "auto"] = "auto"
+
+    # host_port 模式下，Bay 连接 runtime 的 host 地址
+    host_address: str = "127.0.0.1"
+
+    # host_port 模式下，是否发布端口；auto 模式回退也依赖它
+    publish_ports: bool = True
+
+    # 指定固定宿主机端口（None/0 表示随机端口）
+    host_port: int | None = None
 
 
 class K8sConfig(BaseModel):
@@ -62,13 +80,24 @@ class ResourceSpec(BaseModel):
 
 
 class ProfileConfig(BaseModel):
-    """Runtime profile configuration."""
+    """Runtime profile configuration.
+
+    Note:
+    - `runtime_port` 是运行时容器对外提供 HTTP API 的容器内端口。
+      * Ship 默认通常为 8000，但不应写死，必须可配置。
+      * 在 DockerDriver 中可选择走“容器网络直连”或“宿主机端口映射”。
+    """
 
     id: str
     image: str = "ship:latest"
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
     capabilities: list[str] = Field(default_factory=lambda: ["filesystem", "shell", "ipython"])
     idle_timeout: int = 1800  # 30 minutes
+
+    # 容器内运行时 HTTP 端口（用于 Bay->Runtime 访问）
+    # Ship 当前默认监听 8123（见 ship 容器启动日志），因此这里给出默认 8123，但推荐在 config.yaml 里显式配置。
+    runtime_port: int | None = 8123
+
     env: dict[str, str] = Field(default_factory=dict)
 
 

@@ -2,6 +2,11 @@
 
 Pure HTTP client for communicating with Ship containers.
 See: plans/bay-design.md section 8
+
+NOTE: Ship endpoints are defined under:
+- filesystem: /fs/read_file, /fs/write_file, /fs/list_dir, /fs/delete_file
+- ipython: /ipython/exec
+- shell: /shell/exec
 """
 
 from __future__ import annotations
@@ -104,20 +109,22 @@ class ShipClient(RuntimeClient):
     async def read_file(self, path: str) -> str:
         """Read file content."""
         result = await self._post("/fs/read_file", {"path": path})
+        # Ship returns {content, path, size}
         return result.get("content", "")
 
     async def write_file(self, path: str, content: str) -> None:
         """Write file content."""
-        await self._post("/fs/write_file", {"path": path, "content": content})
+        await self._post("/fs/write_file", {"path": path, "content": content, "mode": "w"})
 
     async def list_files(self, path: str) -> list[dict[str, Any]]:
         """List directory contents."""
-        result = await self._post("/fs/list", {"path": path})
-        return result.get("entries", [])
+        # Ship returns {files: [...], current_path: ...}
+        result = await self._post("/fs/list_dir", {"path": path, "show_hidden": False})
+        return result.get("files", [])
 
     async def delete_file(self, path: str) -> None:
         """Delete file or directory."""
-        await self._post("/fs/delete", {"path": path})
+        await self._post("/fs/delete_file", {"path": path})
 
     # Execution operations
 
@@ -129,7 +136,7 @@ class ShipClient(RuntimeClient):
         cwd: str | None = None,
     ) -> ExecutionResult:
         """Execute shell command."""
-        payload = {
+        payload: dict[str, Any] = {
             "command": command,
             "timeout": timeout,
         }
@@ -143,6 +150,7 @@ class ShipClient(RuntimeClient):
             output=result.get("output", ""),
             error=result.get("error"),
             exit_code=result.get("exit_code"),
+            data={"raw": result},
         )
 
     async def exec_python(
@@ -154,13 +162,19 @@ class ShipClient(RuntimeClient):
         """Execute Python code."""
         result = await self._post(
             "/ipython/exec",
-            {"code": code, "timeout": timeout},
+            {"code": code, "timeout": timeout, "silent": False},
             timeout=timeout + 5,
         )
 
+        output_obj = result.get("output") or {}
+        output_text = output_obj.get("text", "") if isinstance(output_obj, dict) else ""
+
         return ExecutionResult(
-            success=result.get("success", False),
-            output=result.get("output", ""),
+            success=bool(result.get("success", False)),
+            output=output_text,
             error=result.get("error"),
-            data=result.get("data"),
+            data={
+                "execution_count": result.get("execution_count"),
+                "output": output_obj,
+            },
         )

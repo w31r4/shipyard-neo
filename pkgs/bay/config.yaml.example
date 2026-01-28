@@ -16,12 +16,27 @@ database:
 
 driver:
   type: docker  # docker | k8s
+
   docker:
     socket: "unix:///var/run/docker.sock"
-    network: "bay-network"
-  # k8s:  # Phase 2
-  #   namespace: "bay"
-  #   kubeconfig: null
+
+    # Bay ↔ Runtime 连通模式：
+    # - host_port: Bay 跑在宿主机上（最常见）。通过 publish 端口映射访问 runtime。
+    # - container_network: Bay 跑在容器内且与 runtime 同网络，通过容器 IP 直连。
+    # - auto: 优先 container_network，失败回退 host_port。
+    connect_mode: host_port
+
+    # host_port 模式下 Bay 访问 runtime 的 host 地址
+    host_address: "127.0.0.1"
+
+    # 是否发布端口（host_port/auto 必须为 true 才能动态获取 HostPort）
+    publish_ports: true
+
+    # 固定宿主机端口（null/0 表示随机端口）
+    host_port: null
+
+    # container_network/auto 时可指定网络名；host_port 模式可不填
+    network: null
 
 workspace:
   root_path: "/var/lib/bay/workspaces"
@@ -43,6 +58,10 @@ security:
 profiles:
   - id: python-default
     image: "ship:latest"
+
+    # runtime 容器内 HTTP 端口（Ship 当前默认是 8123，见 ship 镜像启动日志）
+    runtime_port: 8123
+
     resources:
       cpus: 1.0
       memory: "1g"
@@ -55,6 +74,7 @@ profiles:
 
   - id: python-data
     image: "ship:data"
+    runtime_port: 8123
     resources:
       cpus: 2.0
       memory: "4g"
@@ -68,6 +88,7 @@ profiles:
   # Example: GPU profile (Phase 2+)
   # - id: python-gpu
   #   image: "ship:gpu"
+  #   runtime_port: 8123
   #   resources:
   #     cpus: 4.0
   #     memory: "16g"

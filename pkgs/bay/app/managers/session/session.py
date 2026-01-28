@@ -7,10 +7,12 @@ See: plans/bay-design.md section 3.2
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -147,14 +149,18 @@ class SessionManager:
         # Need to start container
         if session.observed_state != SessionStatus.RUNNING:
             try:
-                endpoint = await self._driver.start(session.container_id)
+                endpoint = await self._driver.start(
+                    session.container_id,
+                    runtime_port=int(profile.runtime_port or 8000),
+                )
                 session.endpoint = endpoint
+                
+                # Wait for Ship runtime to be ready before marking as RUNNING
+                await self._wait_for_ready(endpoint, session.id)
+                
                 session.observed_state = SessionStatus.RUNNING
                 session.last_observed_at = datetime.utcnow()
                 await self._db.commit()
-
-                # TODO: Call Ship GET /meta for handshake validation
-                # await self._validate_runtime(session, profile)
 
             except Exception as e:
                 self._log.error(
@@ -167,6 +173,76 @@ class SessionManager:
                 raise
 
         return session
+
+    async def _wait_for_ready(
+        self,
+        endpoint: str,
+        session_id: str,
+        *,
+        max_wait_seconds: float = 120.0,
+        initial_interval: float = 0.5,
+        max_interval: float = 1.0,
+        backoff_factor: float = 2.0,
+    ) -> None:
+        """Wait for Ship runtime to be ready using exponential backoff.
+        
+        Polls the /health endpoint until it responds successfully.
+        Uses generous timeouts to accommodate image pulling in production.
+        
+        Args:
+            endpoint: Ship endpoint URL
+            session_id: Session ID for logging
+            max_wait_seconds: Maximum total time to wait (default 120s for image pull)
+            initial_interval: Initial retry interval in seconds
+            max_interval: Maximum retry interval in seconds
+            backoff_factor: Multiplier for exponential backoff
+            
+        Raises:
+            SessionNotReadyError: If runtime doesn't become ready in time
+        """
+        url = f"{endpoint.rstrip('/')}/health"
+        
+        start_time = asyncio.get_event_loop().time()
+        interval = initial_interval
+        attempt = 0
+        
+        while True:
+            attempt += 1
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, timeout=2.0)
+                    if response.status_code == 200:
+                        elapsed = asyncio.get_event_loop().time() - start_time
+                        self._log.info(
+                            "session.runtime_ready",
+                            session_id=session_id,
+                            attempts=attempt,
+                            elapsed_ms=int(elapsed * 1000),
+                        )
+                        return
+            except (httpx.RequestError, httpx.TimeoutException):
+                pass
+            
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed >= max_wait_seconds:
+                break
+            
+            # Exponential backoff with max cap
+            await asyncio.sleep(min(interval, max_wait_seconds - elapsed))
+            interval = min(interval * backoff_factor, max_interval)
+        
+        self._log.error(
+            "session.runtime_not_ready",
+            session_id=session_id,
+            endpoint=endpoint,
+            attempts=attempt,
+            elapsed_seconds=max_wait_seconds,
+        )
+        raise SessionNotReadyError(
+            message="Runtime failed to become ready",
+            sandbox_id=session_id,
+            retry_after_ms=1000,
+        )
 
     async def stop(self, session: Session) -> None:
         """Stop a session (reclaim compute).
@@ -214,7 +290,12 @@ class SessionManager:
         if not session.container_id:
             return session
 
-        info = await self._driver.status(session.container_id)
+        info = await self._driver.status(
+            session.container_id,
+            runtime_port=int(self._settings.get_profile(session.profile_id).runtime_port or 8000)
+            if self._settings.get_profile(session.profile_id)
+            else None,
+        )
 
         # Map container status to session status
         if info.status == ContainerStatus.RUNNING:

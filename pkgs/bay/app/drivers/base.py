@@ -8,6 +8,10 @@ It does NOT handle:
 - Rate limiting
 - Quota management
 
+Endpoint 解析注意：
+- Bay 可能运行在宿主机，也可能运行在容器内（挂载 docker.sock）。
+- 因此 Driver 需要支持：容器网络直连（container IP + runtime_port）以及宿主机端口映射（host port）。
+
 See: plans/bay-design.md section 3.1
 """
 
@@ -46,13 +50,17 @@ class ContainerInfo:
 
 class Driver(ABC):
     """Abstract driver interface for container lifecycle management.
-    
+
     All resources created by driver MUST be labeled with:
     - owner
     - sandbox_id
     - session_id
     - workspace_id
     - profile_id
+
+    Note:
+    - `runtime_port` 是 runtime 容器内暴露 HTTP API 的端口（例如 Ship 默认 8000）。
+      不应在 Driver 中硬编码，应该由 Profile/配置传入。
     """
 
     @abstractmethod
@@ -78,14 +86,15 @@ class Driver(ABC):
         ...
 
     @abstractmethod
-    async def start(self, container_id: str) -> str:
+    async def start(self, container_id: str, *, runtime_port: int) -> str:
         """Start a container and return its endpoint.
-        
+
         Args:
             container_id: Container ID from create()
-            
+            runtime_port: Runtime HTTP port inside the container
+
         Returns:
-            Ship REST API endpoint URL
+            Runtime base URL (e.g., http://<ip>:<port> or http://127.0.0.1:<host_port>)
         """
         ...
 
@@ -108,12 +117,14 @@ class Driver(ABC):
         ...
 
     @abstractmethod
-    async def status(self, container_id: str) -> ContainerInfo:
+    async def status(self, container_id: str, *, runtime_port: int | None = None) -> ContainerInfo:
         """Get container status.
-        
+
         Args:
             container_id: Container ID
-            
+            runtime_port: Optional runtime HTTP port inside the container.
+                If provided, driver may compute `endpoint`.
+
         Returns:
             Container information
         """
