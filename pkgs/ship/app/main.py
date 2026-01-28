@@ -5,7 +5,6 @@ from .components.ipython import router as ipython_router
 from .components.shell import router as shell_router
 from .components.upload import router as upload_router
 from .components.term import router as term_router
-from .components.user_manager import UserManager
 import logging
 import tomli
 from pathlib import Path
@@ -16,9 +15,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    logger.info("Starting Ship container initialization...")
-    restored_count = await UserManager.restore_all_users()
-    logger.info(f"User restoration completed: {restored_count} users restored")
+    logger.info("Starting Ship container...")
     yield
     logger.info("Ship container shutting down")
 

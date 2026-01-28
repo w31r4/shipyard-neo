@@ -66,16 +66,38 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && npm install -g pnpm vercel \
     && npm cache clean --force
 
-# 配置sudo
-RUN echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-    echo "Defaults:root !requiretty" >> /etc/sudoers && \
-    groupadd -g 9999 shipyard_users || true
+# 创建固定用户 shipyard（UID 1000）和 workspace 目录
+RUN groupadd -g 1000 shipyard \
+    && useradd -u 1000 -g shipyard -d /workspace -s /bin/bash shipyard \
+    && mkdir -p /workspace \
+    && chown shipyard:shipyard /workspace \
+    && chmod 755 /workspace
+
+# 配置 sudo（允许 root 无密码执行 sudo，用于切换到 shipyard 用户）
+RUN echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && echo "Defaults:root !requiretty" >> /etc/sudoers \
+    && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# 创建 .bashrc（login shell 时自动 cd 到 /workspace）
+RUN echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
+    && echo "export PS1='\\u@shipyard:\\w\\$ '" >> /workspace/.bashrc \
+    && echo 'export PATH=/usr/local/bin:/usr/bin:/bin' >> /workspace/.bashrc \
+    && echo 'export HOME=/workspace' >> /workspace/.bashrc \
+    && echo 'cd /workspace' >> /workspace/.bashrc \
+    && chown shipyard:shipyard /workspace/.bashrc \
+    && chmod 644 /workspace/.bashrc
 
 # 复制项目文件
 COPY . .
 
+# 设置入口脚本权限
+RUN chmod +x /app/entrypoint.sh
+
 # 暴露端口
 EXPOSE 8123
 
-# 启动命令
+# 入口脚本：修复 workspace 权限后启动应用
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# 启动命令（以 root 运行 FastAPI，内部通过 sudo 切换到 shipyard 执行命令）
 CMD ["python", "run.py"]

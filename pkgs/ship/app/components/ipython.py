@@ -1,19 +1,18 @@
 import asyncio
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from jupyter_client.manager import AsyncKernelManager
-from ..workspace import get_session_workspace
+from ..workspace import get_workspace_dir, WORKSPACE_ROOT
 
 router = APIRouter()
 
-# 全局内核管理器字典，以 session_id 为 key
-kernel_managers: Dict[str, AsyncKernelManager] = {}
+# 单例内核管理器
+_kernel_manager: Optional[AsyncKernelManager] = None
 
 
 class ExecuteCodeRequest(BaseModel):
     code: str
-    kernel_id: Optional[str] = None
     timeout: int = 30
     silent: bool = False
 
@@ -23,37 +22,39 @@ class ExecuteCodeResponse(BaseModel):
     execution_count: Optional[int] = None
     output: dict = {}
     error: Optional[str] = None
-    kernel_id: str
 
 
-class KernelInfo(BaseModel):
-    kernel_id: str
+class KernelStatusResponse(BaseModel):
     status: str
-    connections: int
+    has_kernel: bool
+    workspace: str
 
 
-async def get_or_create_kernel(session_id: str) -> AsyncKernelManager:
-    """获取或创建内核管理器，基于 session_id"""
-    if session_id not in kernel_managers:
-        # 创建会话工作目录
-        workspace_dir = await get_session_workspace(session_id)
+async def get_or_create_kernel() -> AsyncKernelManager:
+    """获取或创建单例内核管理器"""
+    global _kernel_manager
+    if _kernel_manager is None:
+        # 确保 workspace 目录存在
+        workspace_dir = get_workspace_dir()
 
         # 创建新的内核管理器，在启动时设置工作目录
         km: AsyncKernelManager = AsyncKernelManager()
-        # 通过 cwd 参数在启动时设置工作目录，避免动态代码执行
+        # 通过 cwd 参数在启动时设置工作目录
         await km.start_kernel(cwd=str(workspace_dir))
-        kernel_managers[session_id] = km
+        _kernel_manager = km
 
         # 执行静态初始化代码（字体配置等）
         await _init_kernel_matplotlib(km)
 
-    return kernel_managers[session_id]
+    return _kernel_manager
 
 
 async def ensure_kernel_running(km: AsyncKernelManager):
     """确保内核正在运行"""
     if not km.has_kernel or not await km.is_alive():
-        await km.start_kernel()
+        workspace_dir = get_workspace_dir()
+        await km.start_kernel(cwd=str(workspace_dir))
+        await _init_kernel_matplotlib(km)
 
 
 # 静态初始化代码（matplotlib 字体配置等，不包含任何动态内容）
@@ -183,120 +184,40 @@ async def execute_code_in_kernel(
 
 
 @router.post("/exec", response_model=ExecuteCodeResponse)
-async def execute_code(
-    request: ExecuteCodeRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def execute_code(request: ExecuteCodeRequest):
     """执行 IPython 代码"""
     try:
-        # 使用 session_id 作为 kernel_id
-        session_id = x_session_id
-        km = await get_or_create_kernel(session_id)
+        km = await get_or_create_kernel()
 
         result = await execute_code_in_kernel(
             km, request.code, timeout=request.timeout, silent=request.silent
         )
-
-        print(result)
 
         return ExecuteCodeResponse(
             success=result["success"],
             execution_count=result["execution_count"],
             output=result["output"],
             error=result["error"],
-            kernel_id=session_id,
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to execute code: {str(e)}")
 
 
-@router.post("/create_kernel")
-async def create_kernel(x_session_id: str = Header(..., alias="X-SESSION-ID")):
-    """为指定 session 创建新的内核"""
+@router.get("/kernel/status", response_model=KernelStatusResponse)
+async def get_kernel_status():
+    """获取内核状态"""
     try:
-        session_id = x_session_id
-        await get_or_create_kernel(session_id)
-
-        return {
-            "success": True,
-            "kernel_id": session_id,
-            "workspace": str(get_session_workspace(session_id)),
-            "message": f"Kernel for session {session_id} created successfully",
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create kernel: {str(e)}"
-        )
-
-
-@router.delete("/kernel")
-async def shutdown_kernel(x_session_id: str = Header(..., alias="X-SESSION-ID")):
-    """关闭指定 session 的内核"""
-    try:
-        session_id = x_session_id
-        if session_id not in kernel_managers:
-            raise HTTPException(
-                status_code=404, detail=f"Kernel for session {session_id} not found"
+        global _kernel_manager
+        
+        if _kernel_manager is None:
+            return KernelStatusResponse(
+                status="not_started",
+                has_kernel=False,
+                workspace=str(WORKSPACE_ROOT),
             )
 
-        km = kernel_managers[session_id]
-        await km.shutdown_kernel()
-        del kernel_managers[session_id]
-
-        return {
-            "success": True,
-            "message": f"Kernel for session {session_id} shutdown successfully",
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to shutdown kernel: {str(e)}"
-        )
-
-
-@router.get("/kernels")
-async def list_kernels():
-    """列出所有活跃的内核"""
-    try:
-        kernels = []
-        for session_id, km in kernel_managers.items():
-            try:
-                status = "unknown"
-                if km.has_kernel:
-                    if await km.is_alive():
-                        status = "alive"
-                    else:
-                        status = "dead"
-
-                kernels.append(
-                    KernelInfo(
-                        kernel_id=session_id,
-                        status=status,
-                        connections=1,  # 简化处理
-                    )
-                )
-            except Exception:
-                kernels.append(
-                    KernelInfo(kernel_id=session_id, status="error", connections=0)
-                )
-
-        return {"kernels": kernels}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list kernels: {str(e)}")
-
-
-@router.get("/kernel/status")
-async def get_kernel_status(x_session_id: str = Header(..., alias="X-SESSION-ID")):
-    """获取指定 session 的内核状态"""
-    try:
-        session_id = x_session_id
-        if session_id not in kernel_managers:
-            raise HTTPException(
-                status_code=404, detail=f"Kernel for session {session_id} not found"
-            )
-
-        km = kernel_managers[session_id]
+        km = _kernel_manager
         status = "unknown"
 
         if km.has_kernel:
@@ -305,16 +226,61 @@ async def get_kernel_status(x_session_id: str = Header(..., alias="X-SESSION-ID"
             else:
                 status = "dead"
 
+        return KernelStatusResponse(
+            status=status,
+            has_kernel=km.has_kernel,
+            workspace=str(WORKSPACE_ROOT),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get kernel status: {str(e)}"
+        )
+
+
+@router.post("/kernel/restart")
+async def restart_kernel():
+    """重启内核"""
+    try:
+        global _kernel_manager
+        
+        if _kernel_manager is not None:
+            await _kernel_manager.shutdown_kernel()
+            _kernel_manager = None
+        
+        # 创建新的内核
+        await get_or_create_kernel()
+        
         return {
-            "session_id": session_id,
-            "kernel_id": session_id,
-            "status": status,
-            "workspace": str(get_session_workspace(session_id)),
-            "has_kernel": km.has_kernel,
+            "success": True,
+            "message": "Kernel restarted successfully",
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to restart kernel: {str(e)}"
+        )
+
+
+@router.delete("/kernel")
+async def shutdown_kernel():
+    """关闭内核"""
+    try:
+        global _kernel_manager
+        
+        if _kernel_manager is None:
+            raise HTTPException(
+                status_code=404, detail="Kernel not found"
+            )
+
+        await _kernel_manager.shutdown_kernel()
+        _kernel_manager = None
+
+        return {
+            "success": True,
+            "message": "Kernel shutdown successfully",
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to get kernel status: {str(e)}"
+            status_code=500, detail=f"Failed to shutdown kernel: {str(e)}"
         )

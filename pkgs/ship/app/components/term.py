@@ -3,6 +3,7 @@ WebSocket terminal component for interactive shell sessions.
 
 This module provides a WebSocket endpoint for xterm.js integration,
 supporting PTY-based interactive shell sessions with terminal resize.
+Each WebSocket connection creates a new PTY; disconnection destroys it.
 """
 
 import asyncio
@@ -12,24 +13,20 @@ import fcntl
 import termios
 import logging
 import json
-from typing import Optional, Dict
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Header, Query
+from typing import Optional
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
-from .user_manager import UserManager, get_or_create_session_user
+from .user_manager import start_interactive_shell
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 活跃的终端会话: session_id -> TerminalSession
-_active_terminals: Dict[str, "TerminalSession"] = {}
-
 
 class TerminalSession:
     """Represents an active terminal session"""
 
-    def __init__(self, session_id: str, master_fd: int, pid: int):
-        self.session_id = session_id
+    def __init__(self, master_fd: int, pid: int):
         self.master_fd = master_fd
         self.pid = pid
         self.websocket: Optional[WebSocket] = None
@@ -53,12 +50,12 @@ class TerminalSession:
                 # Read from PTY in a thread to avoid blocking
                 data = await loop.run_in_executor(None, read_pty)
                 if not data:
-                    logger.info(f"PTY closed for session {self.session_id}")
+                    logger.info("PTY closed")
                     break
                 # Send to WebSocket as text (xterm expects text)
                 await websocket.send_text(data.decode("utf-8", errors="replace"))
             except WebSocketDisconnect:
-                logger.info(f"WebSocket disconnected for session {self.session_id}")
+                logger.info("WebSocket disconnected")
                 break
             except Exception as e:
                 logger.error(f"Error reading from PTY: {e}")
@@ -98,13 +95,12 @@ class TerminalSession:
         except OSError:
             pass
 
-        logger.info(f"Closed terminal session {self.session_id}")
+        logger.info("Closed terminal session")
 
 
 @router.websocket("/ws")
 async def websocket_terminal(
     websocket: WebSocket,
-    session_id: str = Query(..., alias="session_id"),
     cols: int = Query(80),
     rows: int = Query(24),
 ):
@@ -112,7 +108,6 @@ async def websocket_terminal(
     WebSocket endpoint for interactive terminal.
 
     Query parameters:
-    - session_id: The session ID for user isolation
     - cols: Terminal columns (default 80)
     - rows: Terminal rows (default 24)
 
@@ -126,14 +121,11 @@ async def websocket_terminal(
 
     try:
         # Start interactive shell
-        master_fd, pid = await UserManager.start_interactive_shell(
-            session_id, cols=cols, rows=rows
-        )
+        master_fd, pid = await start_interactive_shell(cols=cols, rows=rows)
 
-        terminal = TerminalSession(session_id, master_fd, pid)
-        _active_terminals[session_id] = terminal
+        terminal = TerminalSession(master_fd, pid)
 
-        logger.info(f"Terminal session started for {session_id}")
+        logger.info("Terminal session started")
 
         # Start PTY reader in background
         read_task = asyncio.create_task(terminal.start_reader(websocket))
@@ -181,5 +173,3 @@ async def websocket_terminal(
         # Cleanup
         if terminal:
             terminal.close()
-            if session_id in _active_terminals:
-                del _active_terminals[session_id]

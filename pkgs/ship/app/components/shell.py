@@ -1,7 +1,7 @@
 from typing import Dict, Optional, List
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from .user_manager import run_as_user
+from .user_manager import run_command, get_background_processes
 
 router = APIRouter()
 
@@ -37,13 +37,10 @@ class ProcessListResponse(BaseModel):
 
 
 @router.post("/exec", response_model=ExecuteShellResponse)
-async def execute_shell_command(
-    request: ExecuteShellRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def execute_shell_command(request: ExecuteShellRequest):
     """执行Shell命令"""
     try:
-        result = await run_as_user(
-            session_id=x_session_id,
+        result = await run_command(
             command=request.command,
             cwd=request.cwd,
             env=request.env,
@@ -61,13 +58,9 @@ async def execute_shell_command(
 
 
 @router.get("/processes", response_model=ProcessListResponse)
-async def list_background_processes(
-    x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
-    """获取当前会话的后台进程列表"""
-    from .user_manager import get_session_background_processes
-
-    processes = get_session_background_processes(x_session_id)
+async def list_background_processes():
+    """获取所有后台进程列表"""
+    processes = get_background_processes()
     return ProcessListResponse(
         processes=[
             ProcessInfo(

@@ -1,5 +1,5 @@
 import aiofiles
-from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -20,12 +20,11 @@ class UploadResponse(BaseModel):
 async def upload_file(
     file: UploadFile = File(...),
     file_path: str = Form(...),
-    x_session_id: str = Header(..., alias="X-SESSION-ID"),
 ):
-    """上传文件到session工作目录"""
+    """上传文件到 workspace 目录"""
     try:
         # 解析并验证目标路径
-        target_path = await resolve_path(x_session_id, file_path)
+        target_path = resolve_path(file_path)
 
         # 确保父目录存在
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,14 +56,11 @@ async def upload_health():
 
 
 @router.get("/download")
-async def download_file(
-    file_path: str,
-    x_session_id: str = Header(..., alias="X-SESSION-ID"),
-):
-    """从session工作目录下载文件"""
+async def download_file(file_path: str):
+    """从 workspace 目录下载文件"""
     try:
         # 解析并验证路径
-        target_path = await resolve_path(x_session_id, file_path)
+        target_path = resolve_path(file_path)
 
         # 检查文件是否存在
         if not target_path.exists():

@@ -1,7 +1,7 @@
 import os
 import aiofiles
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ..workspace import resolve_path
 
@@ -67,12 +67,10 @@ class FileResponse(BaseModel):
 
 
 @router.post("/create_file")
-async def create_file(
-    request: CreateFileRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def create_file(request: CreateFileRequest):
     """创建文件"""
     try:
-        file_path = await resolve_path(x_session_id, request.path)
+        file_path = resolve_path(request.path)
 
         # 确保父目录存在
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,12 +92,10 @@ async def create_file(
 
 
 @router.post("/read_file", response_model=FileResponse)
-async def read_file(
-    request: ReadFileRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def read_file(request: ReadFileRequest):
     """读取文件内容"""
     try:
-        file_path = await resolve_path(x_session_id, request.path)
+        file_path = resolve_path(request.path)
 
         if not file_path.exists():
             raise HTTPException(
@@ -133,12 +129,10 @@ async def read_file(
 
 
 @router.post("/write_file")
-async def write_file(
-    request: WriteFileRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def write_file(request: WriteFileRequest):
     """写入文件内容"""
     try:
-        file_path = await resolve_path(x_session_id, request.path)
+        file_path = resolve_path(request.path)
 
         # 确保父目录存在
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,12 +155,10 @@ async def write_file(
 
 
 @router.post("/edit_file")
-async def edit_file(
-    request: EditFileRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def edit_file(request: EditFileRequest):
     """编辑文件内容 - 替换指定的字符串"""
     try:
-        file_path = await resolve_path(x_session_id, request.path)
+        file_path = resolve_path(request.path)
 
         if not file_path.exists():
             raise HTTPException(
@@ -225,12 +217,10 @@ async def edit_file(
 
 
 @router.post("/delete_file")
-async def delete_file(
-    request: DeleteFileRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def delete_file(request: DeleteFileRequest):
     """删除文件或目录"""
     try:
-        file_path = await resolve_path(x_session_id, request.path)
+        file_path = resolve_path(request.path)
 
         if not file_path.exists():
             raise HTTPException(
@@ -257,12 +247,10 @@ async def delete_file(
 
 
 @router.post("/list_dir", response_model=ListDirResponse)
-async def list_directory(
-    request: ListDirRequest, x_session_id: str = Header(..., alias="X-SESSION-ID")
-):
+async def list_directory(request: ListDirRequest):
     """列出目录内容"""
     try:
-        dir_path = await resolve_path(x_session_id, request.path)
+        dir_path = resolve_path(request.path)
 
         if not dir_path.exists():
             raise HTTPException(
