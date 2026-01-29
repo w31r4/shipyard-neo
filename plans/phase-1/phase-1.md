@@ -105,14 +105,17 @@
 - `DELETE /v1/sandboxes/{id}`
 
 ### 2.3 Capabilities（已可用，E2E 测试覆盖完整）
+
+> **RESTful 风格，统一使用 `/filesystem/` 前缀**
+
 - `POST /v1/sandboxes/{id}/python/exec`
 - `POST /v1/sandboxes/{id}/shell/exec`
-- `POST /v1/sandboxes/{id}/files/read`
-- `POST /v1/sandboxes/{id}/files/write`
-- `POST /v1/sandboxes/{id}/files/list`
-- `POST /v1/sandboxes/{id}/files/delete`
-- `POST /v1/sandboxes/{id}/files/upload`
-- `GET /v1/sandboxes/{id}/files/download`
+- `GET /v1/sandboxes/{id}/filesystem/files?path=...` — 读取文件
+- `PUT /v1/sandboxes/{id}/filesystem/files` — 写入文件
+- `DELETE /v1/sandboxes/{id}/filesystem/files?path=...` — 删除文件
+- `GET /v1/sandboxes/{id}/filesystem/directories?path=.` — 列出目录
+- `POST /v1/sandboxes/{id}/filesystem/upload` — 上传文件 (multipart)
+- `GET /v1/sandboxes/{id}/filesystem/download?path=...` — 下载文件
 
 ## 3. 当前运行默认配置（dev）
 

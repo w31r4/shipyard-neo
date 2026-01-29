@@ -278,12 +278,16 @@ Response: `204`
 >
 > 若运行实例尚未就绪：返回 `503 session_not_ready`，并可附带 `Retry-After`。
 
-#### 6.2.1 Filesystem（通过运行时执行）
+#### 6.2.1 Filesystem（RESTful 风格）
 
-- `POST /v1/sandboxes/{id}/files/read`
-- `POST /v1/sandboxes/{id}/files/write`
-- `POST /v1/sandboxes/{id}/files/list`
-- `POST /v1/sandboxes/{id}/files/delete`
+> **统一使用 `/filesystem/` 前缀，包含 6 个操作原语**
+
+- `GET /v1/sandboxes/{id}/filesystem/files?path=...` — 读取文件
+- `PUT /v1/sandboxes/{id}/filesystem/files` — 写入文件（body: `{path, content}`）
+- `DELETE /v1/sandboxes/{id}/filesystem/files?path=...` — 删除文件或目录
+- `GET /v1/sandboxes/{id}/filesystem/directories?path=.` — 列出目录
+- `POST /v1/sandboxes/{id}/filesystem/upload` — 上传二进制文件 (multipart)
+- `GET /v1/sandboxes/{id}/filesystem/download?path=...` — 下载文件
 
 路径语义（强约束）：
 - 所有路径参数必须是相对路径（相对容器内 workspace 根目录 `/workspace`）

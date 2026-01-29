@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from .components.filesystem import router as fs_router
 from .components.ipython import router as ipython_router
 from .components.shell import router as shell_router
-from .components.upload import router as upload_router
 from .components.term import router as term_router
 from .workspace import WORKSPACE_ROOT
 import logging
@@ -47,7 +46,6 @@ app = FastAPI(
 app.include_router(fs_router, prefix="/fs", tags=["filesystem"])
 app.include_router(ipython_router, prefix="/ipython", tags=["ipython"])
 app.include_router(shell_router, prefix="/shell", tags=["shell"])
-app.include_router(upload_router, tags=["upload"])
 app.include_router(term_router, prefix="/term", tags=["terminal"])
 
 
@@ -88,7 +86,7 @@ async def get_meta():
         },
         "capabilities": {
             "filesystem": {
-                "operations": ["create", "read", "write", "edit", "delete", "list"],
+                "operations": ["create", "read", "write", "edit", "delete", "list", "upload", "download"],
                 "path_mode": "relative_to_mount",
                 "endpoints": {
                     "create": "/fs/create_file",
@@ -97,6 +95,8 @@ async def get_meta():
                     "edit": "/fs/edit_file",
                     "delete": "/fs/delete_file",
                     "list": "/fs/list_dir",
+                    "upload": "/fs/upload",
+                    "download": "/fs/download",
                 },
             },
             "shell": {
@@ -119,9 +119,6 @@ async def get_meta():
                 "endpoints": {
                     "ws": "/term/ws",
                 },
-            },
-            "upload": {
-                "operations": ["upload"],
             },
         },
     }

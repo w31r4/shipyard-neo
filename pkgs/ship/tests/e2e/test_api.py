@@ -304,7 +304,7 @@ class TestUploadDownloadAPI:
         """Test file upload"""
         files = {"file": ("upload_test.txt", b"Uploaded content", "text/plain")}
         response = requests.post(
-            f"{api_url}/upload",
+            f"{api_url}/fs/upload",
             files=files,
             data={"file_path": "uploaded_file.txt"}
         )
@@ -322,7 +322,7 @@ class TestUploadDownloadAPI:
         )
 
         response = requests.get(
-            f"{api_url}/download",
+            f"{api_url}/fs/download",
             params={"file_path": "download_test.txt"}
         )
         assert response.status_code == 200
