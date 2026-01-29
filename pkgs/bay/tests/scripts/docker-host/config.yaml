@@ -39,6 +39,7 @@ security:
 profiles:
   - id: python-default
     image: "ship:latest"
+    runtime_type: ship
     runtime_port: 8123
     resources:
       cpus: 1.0

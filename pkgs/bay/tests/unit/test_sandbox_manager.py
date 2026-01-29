@@ -407,3 +407,85 @@ class TestSandboxManagerDelete:
         )
         deleted_sandbox = result.scalars().first()
         assert deleted_sandbox.current_session_id is None
+
+
+class TestRuntimeTypeFromProfile:
+    """Unit tests for runtime_type configuration.
+    
+    Purpose: Verify runtime_type is correctly read from ProfileConfig.
+    """
+
+    async def test_profile_default_runtime_type_is_ship(self):
+        """ProfileConfig should default runtime_type to 'ship'."""
+        profile = ProfileConfig(id="test-profile")
+        assert profile.runtime_type == "ship"
+
+    async def test_profile_custom_runtime_type(self):
+        """ProfileConfig should accept custom runtime_type."""
+        profile = ProfileConfig(
+            id="browser-profile",
+            runtime_type="browser",
+            image="bay-browser:latest",
+        )
+        assert profile.runtime_type == "browser"
+
+    async def test_settings_profiles_have_runtime_type(
+        self,
+        fake_settings: Settings,
+    ):
+        """Settings profiles should have runtime_type field."""
+        profile = fake_settings.get_profile("python-default")
+        assert profile is not None
+        # Default should be "ship" if not explicitly set
+        assert profile.runtime_type == "ship"
+
+    async def test_session_inherits_runtime_type_from_profile(
+        self,
+        sandbox_manager: SandboxManager,
+        fake_driver: FakeDriver,
+        db_session: AsyncSession,
+        fake_settings: Settings,
+    ):
+        """Session should inherit runtime_type from ProfileConfig.
+        
+        This is the core test: when ensure_running creates a session,
+        it should use profile.runtime_type instead of hardcoded 'ship'.
+        """
+        # Create a profile with custom runtime_type
+        custom_profile = ProfileConfig(
+            id="custom-runtime",
+            runtime_type="custom",
+            image="custom-runtime:latest",
+            runtime_port=9000,
+        )
+        fake_settings.profiles.append(custom_profile)
+
+        # Create sandbox with custom profile
+        sandbox = await sandbox_manager.create(
+            owner="test-user",
+            profile_id="custom-runtime",
+        )
+
+        # Manually create a session to verify runtime_type propagation
+        # (ensure_running would do this, but we test the session creation directly)
+        from app.managers.session import SessionManager
+        from unittest.mock import patch
+
+        with patch("app.managers.session.session.get_settings", return_value=fake_settings):
+            session_mgr = SessionManager(driver=fake_driver, db_session=db_session)
+            
+            # Get workspace for session creation
+            workspace_result = await db_session.execute(
+                select(Workspace).where(Workspace.id == sandbox.workspace_id)
+            )
+            workspace = workspace_result.scalars().first()
+
+            # Create session
+            session = await session_mgr.create(
+                sandbox_id=sandbox.id,
+                workspace=workspace,
+                profile=custom_profile,
+            )
+
+            # Assert runtime_type is inherited from profile
+            assert session.runtime_type == "custom"

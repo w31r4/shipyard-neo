@@ -59,6 +59,10 @@ profiles:
   - id: python-default
     image: "ship:latest"
 
+    # 运行时类型，决定使用哪个 Adapter（默认 ship）
+    # 支持的类型：ship、browser（未来）、gpu（未来）
+    runtime_type: ship
+
     # runtime 容器内 HTTP 端口（Ship 当前默认是 8123，见 ship 镜像启动日志）
     runtime_port: 8123
 
@@ -74,6 +78,7 @@ profiles:
 
   - id: python-data
     image: "ship:data"
+    runtime_type: ship
     runtime_port: 8123
     resources:
       cpus: 2.0
@@ -88,6 +93,7 @@ profiles:
   # Example: GPU profile (Phase 2+)
   # - id: python-gpu
   #   image: "ship:gpu"
+  #   runtime_type: ship
   #   runtime_port: 8123
   #   resources:
   #     cpus: 4.0
@@ -99,3 +105,16 @@ profiles:
   #   idle_timeout: 3600
   #   env:
   #     CUDA_VISIBLE_DEVICES: "0"
+
+  # Example: Browser runtime (future)
+  # - id: browser-default
+  #   image: "bay-browser:latest"
+  #   runtime_type: browser
+  #   runtime_port: 9222
+  #   resources:
+  #     cpus: 2.0
+  #     memory: "2g"
+  #   capabilities:
+  #     - browser
+  #   idle_timeout: 1800
+  #   env: {}

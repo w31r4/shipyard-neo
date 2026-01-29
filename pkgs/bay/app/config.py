@@ -83,13 +83,19 @@ class ProfileConfig(BaseModel):
     """Runtime profile configuration.
 
     Note:
+    - `runtime_type` 决定使用哪个 Adapter 与运行时通信（如 ship, browser 等）。
     - `runtime_port` 是运行时容器对外提供 HTTP API 的容器内端口。
       * Ship 默认通常为 8000，但不应写死，必须可配置。
-      * 在 DockerDriver 中可选择走“容器网络直连”或“宿主机端口映射”。
+      * 在 DockerDriver 中可选择走"容器网络直连"或"宿主机端口映射"。
     """
 
     id: str
     image: str = "ship:latest"
+
+    # 运行时类型，决定使用哪个 Adapter（如 ShipAdapter）
+    # 支持的类型：ship（默认）、browser（未来）、gpu（未来）
+    runtime_type: str = "ship"
+
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
     capabilities: list[str] = Field(default_factory=lambda: ["filesystem", "shell", "python"])
     idle_timeout: int = 1800  # 30 minutes

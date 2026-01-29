@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import httpx
 import structlog
@@ -23,9 +22,6 @@ from app.errors import NotFoundError, SessionNotReadyError
 from app.models.session import Session, SessionStatus
 from app.models.workspace import Workspace
 
-if TYPE_CHECKING:
-    from app.clients.runtime import RuntimeClient
-
 logger = structlog.get_logger()
 
 
@@ -36,11 +32,9 @@ class SessionManager:
         self,
         driver: Driver,
         db_session: AsyncSession,
-        runtime_client: "RuntimeClient | None" = None,
     ) -> None:
         self._driver = driver
         self._db = db_session
-        self._runtime_client = runtime_client
         self._log = logger.bind(manager="session")
         self._settings = get_settings()
 
@@ -72,7 +66,7 @@ class SessionManager:
         session = Session(
             id=session_id,
             sandbox_id=sandbox_id,
-            runtime_type="ship",
+            runtime_type=profile.runtime_type,
             profile_id=profile.id,
             desired_state=SessionStatus.PENDING,
             observed_state=SessionStatus.PENDING,
