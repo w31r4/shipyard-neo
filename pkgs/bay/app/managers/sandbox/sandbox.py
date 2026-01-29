@@ -8,6 +8,7 @@ See: plans/bay-design.md section 2.4
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -27,6 +28,29 @@ if TYPE_CHECKING:
     from app.drivers.base import Driver
 
 logger = structlog.get_logger()
+
+# Lock map for sandbox-level concurrency control (single-instance only)
+# Key: sandbox_id, Value: asyncio.Lock
+_sandbox_locks: dict[str, asyncio.Lock] = {}
+_sandbox_locks_lock = asyncio.Lock()
+
+
+async def _get_sandbox_lock(sandbox_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific sandbox.
+    
+    This ensures concurrent ensure_running calls for the same sandbox
+    are serialized, preventing multiple session creation.
+    """
+    async with _sandbox_locks_lock:
+        if sandbox_id not in _sandbox_locks:
+            _sandbox_locks[sandbox_id] = asyncio.Lock()
+        return _sandbox_locks[sandbox_id]
+
+
+async def _cleanup_sandbox_lock(sandbox_id: str) -> None:
+    """Cleanup lock for a deleted sandbox."""
+    async with _sandbox_locks_lock:
+        _sandbox_locks.pop(sandbox_id, None)
 
 
 class SandboxManager:
@@ -183,6 +207,9 @@ class SandboxManager:
         """Ensure sandbox has a running session.
         
         Creates a new session if needed, or returns existing one.
+        Uses in-memory lock + SELECT FOR UPDATE for concurrency control:
+        - In-memory lock: works for single instance (SQLite, dev mode)
+        - SELECT FOR UPDATE: works for multi-instance (PostgreSQL, production)
         
         Args:
             sandbox: Sandbox to ensure is running
@@ -194,41 +221,64 @@ class SandboxManager:
         if profile is None:
             raise ValidationError(f"Invalid profile: {sandbox.profile_id}")
 
-        # Get workspace
-        workspace = await self._workspace_mgr.get_by_id(sandbox.workspace_id)
-        if workspace is None:
-            raise NotFoundError(f"Workspace not found: {sandbox.workspace_id}")
+        # Get sandbox_id and workspace_id before acquiring lock (avoid lazy loading issues inside lock)
+        sandbox_id = sandbox.id
+        workspace_id = sandbox.workspace_id
+        
+        # In-memory lock for single-instance deployments (SQLite doesn't support FOR UPDATE)
+        sandbox_lock = await _get_sandbox_lock(sandbox_id)
+        async with sandbox_lock:
+            # Rollback any pending transaction to ensure we start fresh
+            # This is critical for SQLite where different sessions may have stale snapshots
+            # After rollback, the next query will start a new transaction with fresh data
+            await self._db.rollback()
+            
+            # Re-fetch sandbox from DB with fresh transaction to see committed changes
+            # FOR UPDATE works in PostgreSQL/MySQL for multi-instance deployments
+            result = await self._db.execute(
+                select(Sandbox)
+                .where(Sandbox.id == sandbox_id)
+                .with_for_update()
+            )
+            locked_sandbox = result.scalars().first()
+            if locked_sandbox is None:
+                raise NotFoundError(f"Sandbox not found: {sandbox_id}")
 
-        # Check if we have a current session
-        session = None
-        if sandbox.current_session_id:
-            session = await self._session_mgr.get(sandbox.current_session_id)
+            # Re-fetch workspace after rollback (objects are expired after rollback)
+            workspace = await self._workspace_mgr.get_by_id(workspace_id)
+            if workspace is None:
+                raise NotFoundError(f"Workspace not found: {workspace_id}")
 
-        # Create session if needed
-        if session is None:
-            session = await self._session_mgr.create(
-                sandbox_id=sandbox.id,
+            # Check if we have a current session (re-check after acquiring lock)
+            session = None
+            if locked_sandbox.current_session_id:
+                session = await self._session_mgr.get(locked_sandbox.current_session_id)
+
+            # Create session if needed
+            if session is None:
+                session = await self._session_mgr.create(
+                    sandbox_id=locked_sandbox.id,
+                    workspace=workspace,
+                    profile=profile,
+                )
+                locked_sandbox.current_session_id = session.id
+                await self._db.commit()
+
+            # Ensure session is running
+            session = await self._session_mgr.ensure_running(
+                session=session,
                 workspace=workspace,
                 profile=profile,
             )
-            sandbox.current_session_id = session.id
+
+            # Update idle timeout
+            locked_sandbox.idle_expires_at = datetime.utcnow() + timedelta(
+                seconds=profile.idle_timeout
+            )
+            locked_sandbox.last_active_at = datetime.utcnow()
             await self._db.commit()
 
-        # Ensure session is running
-        session = await self._session_mgr.ensure_running(
-            session=session,
-            workspace=workspace,
-            profile=profile,
-        )
-
-        # Update idle timeout
-        sandbox.idle_expires_at = datetime.utcnow() + timedelta(
-            seconds=profile.idle_timeout
-        )
-        sandbox.last_active_at = datetime.utcnow()
-        await self._db.commit()
-
-        return session
+            return session
 
     async def get_current_session(self, sandbox: Sandbox) -> Session | None:
         """Get current session for sandbox."""
@@ -315,3 +365,6 @@ class SandboxManager:
                 sandbox.owner,
                 force=True,  # Allow deleting managed workspace
             )
+
+        # Cleanup in-memory lock for this sandbox
+        await _cleanup_sandbox_lock(sandbox.id)

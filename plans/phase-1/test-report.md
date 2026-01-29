@@ -160,24 +160,68 @@ workspace_id: Optional[str] = Field(
 - 已删除 sandbox 的 API 路由会先被 404 拦截，不会访问 ensure_running 等代码
 - 仅影响软删除记录（用于审计），不影响正常业务逻辑
 
-### 3.2 已知问题：并发 ensure_running 创建多个 session
+### 3.2 已修复：并发 ensure_running 创建多个 session (**2026-01-29**)
 
 **问题描述**：
-当多个请求同时到达时，`ensure_running` 可能为同一个 sandbox 创建多个 session 和容器。
+当多个请求同时到达时，`ensure_running` 为同一个 sandbox 创建多个 session 和容器。
 
-**日志证据**：
+**日志证据（修复前）**：
 ```
 session.create session_id=sess-fb52712af35b  # 并发创建
 session.create session_id=sess-9caf273ca779  # 并发创建
 session.create session_id=sess-bedf68d1c217  # 并发创建
 ```
 
-**当前状态**：按测试计划备注，记录此问题，后续在 Milestone 4/并发控制中修复。
+**修复方案**：
+在 `SandboxManager.ensure_running()` 中实现双层并发控制：
 
-**计划修复方案**：
-- 方案 A：在 sandbox 粒度加锁（DB 行锁或 Redis 分布式锁）
-- 方案 B：使用乐观锁 + CAS 更新 `sandbox.current_session_id`
-- 方案 C：双重检查锁定模式
+1. **内存锁** - 使用 `asyncio.Lock` 序列化同一 sandbox 的并发请求
+2. **事务刷新** - 在锁内调用 `await self._db.rollback()` 强制开始新事务，读取最新数据
+3. **双重检查** - 重新查询 sandbox 并检查 `current_session_id`，避免重复创建
+
+**代码变更**：[`pkgs/bay/app/managers/sandbox/sandbox.py`](../pkgs/bay/app/managers/sandbox/sandbox.py:206)
+```python
+# 模块级锁映射
+_sandbox_locks: dict[str, asyncio.Lock] = {}
+
+async def ensure_running(self, sandbox: Sandbox) -> Session:
+    sandbox_id = sandbox.id
+    workspace_id = sandbox.workspace_id
+    
+    sandbox_lock = await _get_sandbox_lock(sandbox_id)
+    async with sandbox_lock:
+        # 刷新事务以读取最新数据
+        await self._db.rollback()
+        
+        # 重新查询（FOR UPDATE 用于 PostgreSQL）
+        result = await self._db.execute(
+            select(Sandbox).where(Sandbox.id == sandbox_id).with_for_update()
+        )
+        locked_sandbox = result.scalars().first()
+        
+        # 重新获取 workspace
+        workspace = await self._workspace_mgr.get_by_id(workspace_id)
+        
+        # 双重检查：是否已有 session
+        if locked_sandbox.current_session_id:
+            session = await self._session_mgr.get(locked_sandbox.current_session_id)
+        else:
+            session = await self._session_mgr.create(...)
+            locked_sandbox.current_session_id = session.id
+            await self._db.commit()
+        
+        return await self._session_mgr.ensure_running(session, ...)
+```
+
+**日志证据（修复后）**：
+```
+session.create session_id=sess-abd80c933952  # 只创建 1 个
+session.ensure_running observed_state=running session_id=sess-abd80c933952
+session.ensure_running observed_state=running session_id=sess-abd80c933952
+session.ensure_running observed_state=running session_id=sess-abd80c933952
+session.ensure_running observed_state=running session_id=sess-abd80c933952
+# 5 个并发请求全部成功复用同一个 session
+```
 
 ## 4. 测试文件结构
 
