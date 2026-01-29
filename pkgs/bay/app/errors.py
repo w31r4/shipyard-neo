@@ -129,3 +129,24 @@ class FileNotFoundError(BayError):
     code = "file_not_found"
     message = "File not found"
     status_code = 404
+
+
+class CapabilityNotSupportedError(BayError):
+    """Runtime does not support requested capability."""
+
+    code = "capability_not_supported"
+    message = "Capability not supported by runtime"
+    status_code = 400
+
+    def __init__(
+        self,
+        message: str | None = None,
+        capability: str | None = None,
+        available: list[str] | None = None,
+    ) -> None:
+        details: dict[str, Any] = {}
+        if capability:
+            details["capability"] = capability
+        if available is not None:
+            details["available"] = available
+        super().__init__(message, details)

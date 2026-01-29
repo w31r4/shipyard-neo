@@ -17,7 +17,7 @@ import structlog
 
 from app.adapters.base import BaseAdapter, ExecutionResult
 from app.adapters.ship import ShipAdapter
-from app.errors import SessionNotReadyError
+from app.errors import CapabilityNotSupportedError, SessionNotReadyError
 from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
@@ -68,6 +68,19 @@ class CapabilityRouter:
 
         return self._adapters[session.endpoint]
 
+    async def _require_capability(self, adapter: BaseAdapter, capability: str) -> None:
+        """Fail-fast if runtime does not declare the requested capability.
+
+        Uses runtime `/meta` (cached by adapter) to validate.
+        """
+        meta = await adapter.get_meta()
+        if capability not in meta.capabilities:
+            raise CapabilityNotSupportedError(
+                message=f"Runtime does not support capability: {capability}",
+                capability=capability,
+                available=list(meta.capabilities.keys()),
+            )
+
     # -- Python capability --
 
     async def exec_python(
@@ -89,6 +102,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "python")
 
         self._log.info(
             "capability.python.exec",
@@ -122,6 +136,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "shell")
 
         self._log.info(
             "capability.shell.exec",
@@ -150,6 +165,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.read",
@@ -174,6 +190,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.write",
@@ -200,6 +217,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.list",
@@ -222,6 +240,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.delete",
@@ -248,6 +267,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.upload",
@@ -274,6 +294,7 @@ class CapabilityRouter:
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session)
+        await self._require_capability(adapter, "filesystem")
 
         self._log.info(
             "capability.files.download",
