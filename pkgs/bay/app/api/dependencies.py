@@ -4,6 +4,7 @@ Provides dependency injection for:
 - Database sessions
 - Managers (Sandbox, Session, Workspace)
 - Driver
+- Services (Idempotency)
 - Authentication (TODO)
 """
 
@@ -20,6 +21,7 @@ from app.db.session import get_session_dependency
 from app.drivers.base import Driver
 from app.drivers.docker import DockerDriver
 from app.managers.sandbox import SandboxManager
+from app.services.idempotency import IdempotencyService
 
 
 @lru_cache
@@ -41,6 +43,17 @@ async def get_sandbox_manager(
     """Get SandboxManager with injected dependencies."""
     driver = get_driver()
     return SandboxManager(driver=driver, db_session=session)
+
+
+async def get_idempotency_service(
+    session: Annotated[AsyncSession, Depends(get_session_dependency)],
+) -> IdempotencyService:
+    """Get IdempotencyService with injected dependencies."""
+    settings = get_settings()
+    return IdempotencyService(
+        db_session=session,
+        config=settings.idempotency,
+    )
 
 
 def get_current_owner(request: Request) -> str:
@@ -68,4 +81,5 @@ def get_current_owner(request: Request) -> str:
 DriverDep = Annotated[Driver, Depends(get_driver)]
 SessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 SandboxManagerDep = Annotated[SandboxManager, Depends(get_sandbox_manager)]
+IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
 OwnerDep = Annotated[str, Depends(get_current_owner)]

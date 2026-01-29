@@ -226,6 +226,14 @@ cd pkgs/bay
 
 根据 [tests.md](tests.md) 的 TODO 部分：
 
-- [ ] 加入 `GET /meta` 握手校验后，补充 capabilities 校验测试
-- [ ] 加入 IdempotencyKey 后，补充 `POST /v1/sandboxes` 幂等测试
+- [x] 加入 `GET /meta` 握手校验后，补充 capabilities 校验测试 (ShipAdapter.get_meta 已实现)
+- [x] 加入 IdempotencyKey 后，补充 `POST /v1/sandboxes` 幂等测试 (**2026-01-29 已完成**)
 - [ ] 修复并发 ensure_running 竞态问题后，更新并发测试断言
+
+### 6.1 Idempotency 测试更新 (2026-01-29)
+
+新增 `TestE2E06Idempotency` 测试类，包含 4 个测试：
+- `test_idempotent_create_returns_same_response` - 相同 key 返回相同响应
+- `test_idempotent_create_conflict_on_different_body` - 不同 body 返回 409
+- `test_create_without_idempotency_key` - 无 key 正常创建多个
+- `test_invalid_idempotency_key_format` - 无效 key 格式返回 409

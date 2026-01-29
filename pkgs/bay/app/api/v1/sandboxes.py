@@ -8,9 +8,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Header, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.api.dependencies import OwnerDep, SandboxManagerDep
+from app.api.dependencies import IdempotencyServiceDep, OwnerDep, SandboxManagerDep
 from app.config import get_settings
 from app.models.sandbox import SandboxStatus
 
@@ -73,24 +74,58 @@ def _sandbox_to_response(sandbox, current_session=None) -> SandboxResponse:
 async def create_sandbox(
     request: CreateSandboxRequest,
     sandbox_mgr: SandboxManagerDep,
+    idempotency_svc: IdempotencyServiceDep,
     owner: OwnerDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
-) -> SandboxResponse:
+) -> SandboxResponse | JSONResponse:
     """Create a new sandbox.
     
     - Lazy session creation: status may be 'idle' initially
     - ttl=null or ttl=0 means no expiry
+    - Supports Idempotency-Key header for safe retries
     """
-    # TODO: Handle idempotency key
+    # Serialize request body for fingerprinting
+    request_body = request.model_dump_json()
+    request_path = "/v1/sandboxes"
     
+    # 1. Check idempotency key if provided
+    if idempotency_key:
+        cached = await idempotency_svc.check(
+            owner=owner,
+            key=idempotency_key,
+            path=request_path,
+            method="POST",
+            body=request_body,
+        )
+        if cached:
+            # Return cached response with original status code
+            return JSONResponse(
+                content=cached.response,
+                status_code=cached.status_code,
+            )
+    
+    # 2. Create sandbox
     sandbox = await sandbox_mgr.create(
         owner=owner,
         profile_id=request.profile,
         workspace_id=request.workspace_id,
         ttl=request.ttl,
     )
+    response = _sandbox_to_response(sandbox)
+    
+    # 3. Save idempotency key if provided
+    if idempotency_key:
+        await idempotency_svc.save(
+            owner=owner,
+            key=idempotency_key,
+            path=request_path,
+            method="POST",
+            body=request_body,
+            response=response,
+            status_code=201,
+        )
 
-    return _sandbox_to_response(sandbox)
+    return response
 
 
 @router.get("", response_model=SandboxListResponse)

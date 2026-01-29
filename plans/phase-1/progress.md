@@ -2,7 +2,7 @@
 
 > 更新日期：2026-01-29
 >
-> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)
+> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)
 
 ## 1. 总体进度
 
@@ -14,7 +14,7 @@
 | Upload/Download | ✅ 100% | API + E2E 测试已添加 |
 | 统一错误模型 | 🟡 80% | 大部分完成，FileNotFoundError 刚添加 |
 | 鉴权 | ⏳ 0% | 待设计实现 |
-| Idempotency | ⏳ 0% | 模型已建，API 未接入 |
+| Idempotency | ✅ 100% | Service + API 已接入 |
 
 ## 2. Capability Adapter 重构详情
 
@@ -46,8 +46,8 @@
 | # | 任务 | 状态 | 说明 |
 |:--|:--|:--|:--|
 | 1 | Ship `/meta` 握手校验 | ✅ | ShipAdapter.get_meta() 实现，带缓存 |
-| 2 | 统一错误模型 | 🟡 | BayError 层级完整，刚添加 FileNotFoundError |
-| 3 | Idempotency-Key | ⏳ | 模型已建，API 层未接入 |
+| 2 | 统一错误模型 | ✅ | BayError 层级完整，ConflictError 用于幂等冲突 |
+| 3 | Idempotency-Key | ✅ | IdempotencyService + API 已接入，E2E 测试通过 |
 | 4 | stop/delete 资源回收验证 | ✅ | E2E 测试覆盖 |
 
 ## 4. Phase 1 P1 清单（phase-1.md 第 3.2 节）
@@ -72,9 +72,10 @@
 
 | 文件 | 测试数 | 状态 |
 |:--|:--|:--|
-| `test_docker_driver.py` | ~10 | ✅ |
-| `test_sandbox_manager.py` | ~10 | ✅ |
+| `test_docker_driver.py` | 12 | ✅ |
+| `test_sandbox_manager.py` | 12 | ✅ |
 | `test_ship_adapter.py` | 16 | ✅ |
+| `test_idempotency.py` | 24 | ✅ |
 
 ### 6.2 E2E 测试
 
@@ -84,7 +85,8 @@
 | `TestE2E02Stop` | 2 | ✅ |
 | `TestE2E03Delete` | 3 | ✅ |
 | `TestE2E04ConcurrentEnsureRunning` | 1 | ✅ |
-| `TestE2E05FileUploadDownload` | 4 | 🟡 待验证 (FileNotFoundError 刚修复) |
+| `TestE2E05FileUploadDownload` | 4 | ✅ |
+| `TestE2E06Idempotency` | 4 | ✅ |
 
 ### 6.3 测试运行命令
 
@@ -101,22 +103,47 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 
 ## 7. 下一步行动
 
-1. **运行 E2E 测试验证** - 确认 FileNotFoundError 修复生效
-2. **删除 clients/runtime/ 目录** - 测试通过后
-3. **Idempotency-Key 接入** - `POST /v1/sandboxes`
+1. ~~运行 E2E 测试验证~~ ✅ 16 passed (2026-01-29)
+2. ~~删除 clients/runtime/ 目录~~ ✅ 已删除
+3. ~~Idempotency-Key 接入~~ ✅ 已完成
 4. **鉴权设计与实现** - 参考 `auth-design.md`
+5. **并发 ensure_running 竞态修复** - 参考 `test-report.md` 第 3.2 节
 
 ## 8. 依赖关系
 
 ```
 [x] Adapter 重构
     ↓
-[ ] 删除 clients/
+[x] 删除 clients/
     ↓
-[ ] Idempotency-Key
+[x] Idempotency-Key
     ↓
 [ ] 鉴权实现
 ```
+
+## 9. Idempotency 实现详情
+
+根据 [`idempotency-design.md`](idempotency-design.md) 实现：
+
+| # | 任务 | 状态 | 文件 |
+|:--|:--|:--|:--|
+| 1 | 设计文档 | ✅ | `idempotency-design.md` |
+| 2 | IdempotencyService | ✅ | `app/services/idempotency.py` |
+| 3 | 配置项 | ✅ | `app/config.py` (IdempotencyConfig) |
+| 4 | 依赖注入 | ✅ | `app/api/dependencies.py` |
+| 5 | API 接入 | ✅ | `app/api/v1/sandboxes.py` |
+| 6 | 单元测试 | ✅ | `tests/unit/test_idempotency.py` (24 tests) |
+| 7 | E2E 测试 | ✅ | `tests/integration/test_e2e_api.py` (4 tests) |
+
+### 9.1 关键设计决策
+
+| 决策项 | 选择 |
+|:--|:--|
+| fingerprint 包含 body | ✅ 包含 (SHA256 hash) |
+| 409 返回原响应 | ❌ 仅返回错误 |
+| TTL | 1 小时 (可配置) |
+| 存储 | SQLite 同库 |
+| 过期清理 | 惰性删除 |
 
 ---
 

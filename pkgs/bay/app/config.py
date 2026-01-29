@@ -111,6 +111,13 @@ class WorkspaceConfig(BaseModel):
     mount_path: str = "/workspace"
 
 
+class IdempotencyConfig(BaseModel):
+    """Idempotency layer configuration."""
+
+    enabled: bool = True
+    ttl_hours: int = 1  # How long to keep idempotency keys
+
+
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
@@ -141,6 +148,7 @@ class Settings(BaseSettings):
     driver: DriverConfig = Field(default_factory=DriverConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
 
     # Default profiles
     profiles: list[ProfileConfig] = Field(
